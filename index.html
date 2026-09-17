@@ -17,7 +17,8 @@
     .charge-btn { background: #007bff; }
     .secondary-btn { width: 100%; padding: 14px; font-size: 16px; color: #333; border: 1px solid #ccc; border-radius: 12px; cursor: pointer; font-weight: bold; background: #f8f9fa; margin-top: 10px; }
     
-    input { width: 100%; padding: 14px; font-size: 24px; border: 2px solid #ddd; border-radius: 12px; text-align: center; font-weight: bold; margin-top: 15px; }
+    input, select { width: 100%; padding: 14px; font-size: 24px; border: 2px solid #ddd; border-radius: 12px; text-align: center; font-weight: bold; margin-top: 15px; box-sizing: border-box; }
+    select { font-size: 16px; text-align: center; }
     .hidden { display: none; }
     
     .spinner { width: 50px; height: 50px; border: 5px solid #f3f3f3; border-top: 5px solid #007bff; border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto 20px; }
@@ -55,27 +56,44 @@
       <button class="secondary-btn" onclick="resetToStart()">戻る</button>
     </div>
 
-    <!-- 4. 金額入力画面（手入力のみ） -->
-    <div id="input-view" class="hidden">
-      <h2 id="mode-title">金額設定</h2>
-      <input type="number" id="custom-amount" placeholder="金額を入力 (円)">
-      <button class="main-btn" onclick="submitAmount()">確定</button>
-      <!-- ★ 戻る -->
+    <!-- 4. 店舗選択画面（お会計モード選択時のみ通過） -->
+    <div id="shop-select-view" class="hidden">
+      <h3>🏪 店舗の選択</h3>
+      <p style="font-size: 13px; color: #666; margin-bottom: 10px;">利用する店舗を選択または登録してください</p>
+
+      <select id="shop-dropdown" style="padding: 10px; margin-top: 5px;">
+        <option value="">選択なし (個人利用)</option>
+      </select>
+
+      <div style="margin: 15px 0 10px 0; display: flex; gap: 5px;">
+        <input type="text" id="new-shop-input" placeholder="新しい店舗名を入力" style="flex: 1; padding: 10px; font-size: 14px; margin-top: 0;">
+        <button onclick="registerNewShop()" style="padding: 10px 14px; font-size: 14px; background: #28a745; color: white; border: none; border-radius: 8px; cursor: pointer; font-weight: bold;">登録</button>
+      </div>
+
+      <button class="main-btn" onclick="confirmShopSelection()">決定して進む</button>
       <button class="secondary-btn" onclick="backToModeSelect()">戻る</button>
     </div>
 
-    <!-- 5. 処理中... -->
+    <!-- 5. 金額入力画面（手入力のみ） -->
+    <div id="input-view" class="hidden">
+      <h2 id="mode-title">金額設定</h2>
+      <div id="selected-shop-label" style="font-size: 14px; color: #007bff; font-weight: bold;"></div>
+      <input type="number" id="custom-amount" placeholder="金額を入力 (円)">
+      <button class="main-btn" onclick="submitAmount()">確定</button>
+      <button class="secondary-btn" onclick="backFromInput()">戻る</button>
+    </div>
+
+    <!-- 6. 処理中... -->
     <div id="processing-view" class="hidden">
       <div class="spinner"></div>
       <div style="font-size: 20px; font-weight: bold;">処理中...</div>
     </div>
 
-    <!-- 6. QRコード表示 -->
+    <!-- 7. QRコード表示 -->
     <div id="qr-view" class="hidden">
       <h3 id="qr-label" style="color: #007bff;"></h3>
       <div id="qrcode" class="pop-anim" style="margin: 20px auto; display: flex; justify-content: center;"></div>
       <p style="color: #666; font-size: 14px;">スマホアプリで読み取ってください</p>
-      <!-- ★ 機能を選択に戻る -->
       <button class="secondary-btn" onclick="backToModeSelect()">完了</button>
     </div>
 
@@ -86,6 +104,21 @@
   const CORRECT_PASS = "4869"; // 暗証番号
   let currentMode = ""; 
   let tempAmount = 0;
+  let selectedShopName = ""; // 選択された店舗名
+
+  // --- 初期化 ＆ 店舗リスト読み込み ---
+  function loadShopList() {
+    const savedShops = JSON.parse(localStorage.getItem('11pay_shops') || '["セブンイレブン", "ローソン", "ファミリーマート"]');
+    const dropdown = document.getElementById("shop-dropdown");
+    dropdown.innerHTML = '<option value="">選択なし (個人利用)</option>';
+    
+    savedShops.forEach(shop => {
+      const opt = document.createElement("option");
+      opt.value = shop;
+      opt.innerText = shop;
+      dropdown.appendChild(opt);
+    });
+  }
 
   // パスワード入力画面へ
   function openPassScreen() {
@@ -106,15 +139,65 @@
     }
   }
 
-  // モード選択（PAY / CHARGE）➔ 金額入力へ
+  // モード選択（PAY / CHARGE）
   function selectMode(mode) {
     currentMode = mode;
-    document.getElementById("custom-amount").value = "";
+    selectedShopName = ""; // 店舗選択のリセット
+    
     document.getElementById("mode-view").classList.add("hidden");
-    document.getElementById("input-view").classList.remove("hidden");
-    document.getElementById("mode-title").innerText = currentMode === "PAY" ? "お会計" : "チャージ";
+
+    if (currentMode === "PAY") {
+      // お会計時 ➔ 店舗選択画面を表示
+      loadShopList();
+      document.getElementById("shop-select-view").classList.remove("hidden");
+    } else {
+      // チャージ時 ➔ 店舗選択はスキップして金額入力へ
+      openInputView();
+    }
   }
 
+  // 新しい店舗の登録
+  function registerNewShop() {
+    const newShop = document.getElementById("new-shop-input").value.trim();
+    if (!newShop) return alert("店舗名を入力してください");
+
+    let savedShops = JSON.parse(localStorage.getItem('11pay_shops') || '["セブンイレブン", "ローソン", "ファミリーマート"]');
+    if (!savedShops.includes(newShop)) {
+      savedShops.push(newShop);
+      localStorage.setItem('11pay_shops', JSON.stringify(savedShops));
+    }
+    
+    document.getElementById("new-shop-input").value = "";
+    loadShopList();
+    document.getElementById("shop-dropdown").value = newShop;
+  }
+
+  // 店舗選択を確定して金額入力画面へ
+  function confirmShopSelection() {
+    selectedShopName = document.getElementById("shop-dropdown").value;
+    document.getElementById("shop-select-view").classList.add("hidden");
+    openInputView();
+  }
+
+  // 金額入力画面を開く共通処理
+  function openInputView() {
+    document.getElementById("custom-amount").value = "";
+    document.getElementById("input-view").classList.remove("hidden");
+    
+    const modeTitle = currentMode === "PAY" ? "お会計" : "チャージ";
+    document.getElementById("mode-title").innerText = modeTitle;
+
+    const shopLabel = document.getElementById("selected-shop-label");
+    if (currentMode === "PAY" && selectedShopName) {
+      shopLabel.innerText = `店舗: ${selectedShopName}`;
+      shopLabel.classList.remove("hidden");
+    } else {
+      shopLabel.innerText = "";
+      shopLabel.classList.add("hidden");
+    }
+  }
+
+  // 金額決定 ➔ 処理中画面へ
   function submitAmount() {
     const inputVal = document.getElementById("custom-amount").value;
     tempAmount = parseInt(inputVal);
@@ -131,8 +214,24 @@
       document.getElementById("processing-view").classList.add("hidden");
       document.getElementById("qr-view").classList.remove("hidden");
 
-      const label = currentMode === "PAY" ? "お支払い" : "チャージ";
-      document.getElementById("qr-label").innerText = `${label}: ${tempAmount.toLocaleString()}円`;
+      // 表示用テキストの生成
+      let labelText = "";
+      if (currentMode === "PAY") {
+        labelText = selectedShopName ? `お支払い (${selectedShopName}): ${tempAmount.toLocaleString()}円` : `お支払い: ${tempAmount.toLocaleString()}円`;
+      } else {
+        labelText = `チャージ: ${tempAmount.toLocaleString()}円`;
+      }
+      document.getElementById("qr-label").innerText = labelText;
+
+      // QR埋め込み文字列の組み立て
+      let qrData = "";
+      if (currentMode === "PAY") {
+        // 店舗選択がある場合は PAY_金額_店舗名、選択なしの場合は PAY_金額
+        qrData = selectedShopName ? `PAY_${tempAmount}_${selectedShopName}` : `PAY_${tempAmount}`;
+      } else {
+        // チャージ時は常に CHARGE_金額
+        qrData = `CHARGE_${tempAmount}`;
+      }
 
       const qrContainer = document.getElementById("qrcode");
       qrContainer.innerHTML = "";
@@ -142,18 +241,30 @@
       qrContainer.classList.add('pop-anim');
 
       new QRCode(qrContainer, {
-        text: (currentMode === 'PAY' ? "PAY_" : "CHARGE_") + tempAmount,
+        text: qrData,
         width: 200,
         height: 200
       });
     }, 1500);
   }
 
+  // 金額入力画面からの「戻る」ボタンの挙動
+  function backFromInput() {
+    document.getElementById("input-view").classList.add("hidden");
+    if (currentMode === "PAY") {
+      document.getElementById("shop-select-view").classList.remove("hidden");
+    } else {
+      document.getElementById("mode-view").classList.remove("hidden");
+    }
+  }
+
   // 機能を選択画面（mode-view）に戻る処理
   function backToModeSelect() {
     tempAmount = 0;
     currentMode = "";
+    selectedShopName = "";
     document.getElementById("custom-amount").value = "";
+    document.getElementById("shop-select-view").classList.add("hidden");
     document.getElementById("input-view").classList.add("hidden");
     document.getElementById("processing-view").classList.add("hidden");
     document.getElementById("qr-view").classList.add("hidden");
@@ -164,9 +275,11 @@
   function resetToStart() {
     tempAmount = 0;
     currentMode = "";
+    selectedShopName = "";
     document.getElementById("custom-amount").value = "";
     document.getElementById("start-view").classList.remove("hidden");
     document.getElementById("pass-view").classList.add("hidden");
+    document.getElementById("shop-select-view").classList.add("hidden");
     document.getElementById("mode-view").classList.add("hidden");
     document.getElementById("input-view").classList.add("hidden");
     document.getElementById("processing-view").classList.add("hidden");
@@ -176,4 +289,3 @@
 
 </body>
 </html>
-
